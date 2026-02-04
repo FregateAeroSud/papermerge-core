@@ -1,0 +1,107 @@
+version: "3.8"
+
+services:
+  # -------------------------
+  # PostgreSQL 17 - shared by Papermerge and Keycloak
+  # -------------------------
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------
+  # Keycloak - OIDC Identity Provider
+  # -------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 9090
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY_HEADERS: "xforwarded"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "9090:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -------------------------
+  # OAuth2 Proxy - Handles OIDC authentication
+  # -------------------------
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --upstream=http://papermerge:80
+      - --provider=keycloak-oidc
+      - --client-id=papermerge
+      - --client-secret=papermerge-secret
+      - --oidc-issuer-url=http://localhost:9090/realms/papermerge
+      - --redirect-url=http://localhost:8080/oauth2/callback
+      - --email-domain=*
+      - --cookie-secret=${OAUTH2_COOKIE_SECRET}
+      - --cookie-secure=false
+      - --cookie-name=_oauth2_proxy
+      - --skip-provider-button=true
+      - --insecure-oidc-skip-issuer-verification=true
+      - --pass-access-token=true
+      - --set-authorization-header=true
+      - --whitelist-domain=localhost:8080
+      - --whitelist-domain=localhost:9090
+    extra_hosts:
+      - "localhost:host-gateway"
+    ports:
+      - "8080:4180"
+    depends_on:
+      - keycloak
+      - papermerge
+
+  # -------------------------
+  # Papermerge Core
+  # -------------------------
+  papermerge:
+    build:
+      context: ../..
+      dockerfile: docker/oidc/Dockerfile
+    restart: unless-stopped
+    environment:
+      PM_DB_URL: postgresql://pm:pm@postgres:5432/pmdb
+      PM_LOG_CONFIG: /app/log_config.yaml
+      PM_OIDC_LOGOUT_URL: http://localhost:9090/realms/papermerge/protocol/openid-connect/logout
+      PM_POST_LOGOUT_REDIRECT_URI: http://localhost:8080
+      PM_OIDC_CLIENT_ID: papermerge
+    volumes:
+      - papermerge_media:/app/media
+      - ./log_config.yaml:/app/log_config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+# -------------------------
+# Volumes
+# -------------------------
+volumes:
+  postgres_data:
+  papermerge_media:
