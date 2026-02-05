@@ -18,7 +18,7 @@ services:
       context: ../..
       dockerfile: docker/standard/Dockerfile
     ports:
-      - "7000:80"
+      - "7000:8000"
     environment:
       PM_PASSWORD: admin
       PM_USERNAME: admin
