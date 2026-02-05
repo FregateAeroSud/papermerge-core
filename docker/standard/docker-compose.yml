@@ -29,7 +29,7 @@ services:
         condition: service_healthy
     volumes:
       - papermerge_data:/core_app/media
-      - ./log_config.yaml:/core_app/log_config.yaml
+#      - ./log_config.yaml:/core_app/log_config.yaml
 
 volumes:
   postgres_data:
